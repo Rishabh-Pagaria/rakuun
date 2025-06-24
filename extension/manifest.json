@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "followup",
+  "version": "1.0",
+  "description": "Generate personalized emails based on webpage content.",
+  "permissions": ["scripting", "storage", "activeTab", "tabs"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["contentScript.js"]
+    }
+  ]
+}
