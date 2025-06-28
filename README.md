@@ -1,5 +1,9 @@
-## Getting Started
+# followUp
 
+Clone the directory 
+```
+git clone 
+```
 Enter to the root folder
 <br>
 cd <root_directory_name>
@@ -20,4 +24,3 @@ pnpm dev
 # or
 bun dev
 ```
-# followUp
