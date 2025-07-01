@@ -2,16 +2,38 @@
 <html>
   <head>
     <title>followUp</title>
-    <style>
-      body { font-family: sans-serif; padding: 10px; width: 300px; }
-      textarea, pre { width: 100%; margin-top: 10px; }
-    </style>
+    <link rel="stylesheet" href="popup.css">
   </head>
   <body>
-    <h2>Generate Email</h2>
-    <textarea id="body" rows="6" placeholder="Selected Text will apppear here"></textarea>
-    <button id="generateBtn">Generate from Selected</button>
-    <pre id="output"></pre>
+    <div class="container">
+      <header class="header">
+        <h1 class="logo">📧 followUp</h1>
+        <p class="tagline">Generate personalized outreach emails</p>
+      </header>
+      
+      <main class="main">
+        <div class="input-section">
+          <label for="body" class="label">Selected Content</label>
+          <textarea 
+            id="body" 
+            rows="6" 
+            placeholder="Selected text will appear here..."
+            class="textarea"
+          ></textarea>
+        </div>
+        
+        <div class="button-section">
+          <button id="generateBtn" class="generate-btn">
+            <span class="btn-text">Generate and Magic</span>
+            <div class="spinner" id="spinner"></div>
+          </button>
+        </div>
+        
+        <div class="output-section">
+          <div id="output" class="output"></div>
+        </div>
+      </main>
+    </div>
 
     <script src="popup.js"></script>
   </body>

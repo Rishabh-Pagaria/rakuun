@@ -10,28 +10,51 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
+  // Show output with animation
+  function showOutput(message, type = '') {
+    output.textContent = message;
+    output.className = `output show ${type}`;
+  }
+
+  // Hide output
+  function hideOutput() {
+    output.className = 'output';
+  }
+
   generateBtn.addEventListener("click", async () => {
     const selectedText = bodyInput.value.trim();
+    
     if (!selectedText) {
-      output.textContent = "Please enter or select some text first.";
+      showOutput("Please enter or select some text first.", "error");
       return;
     }
-    output.textContent = "Generating email...";
+
+    // Start loading animation
+    generateBtn.classList.add("loading");
+    generateBtn.disabled = true;
+    showOutput("Generating your personalized email...");
+
     try {
       const res = await fetch("http://localhost:3000/api/generateEmail", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ selectedText }),
       });
+
       const data = await res.json();
+
       if (data.email) {
         bodyInput.value = data.email; // Replace textarea with generated email
-        output.textContent = "Email generated!";
+        showOutput("Email generated successfully! You can edit it above.", "success");
       } else {
-        output.textContent = data.error || "Failed to generate email.";
+        showOutput(data.error || "Failed to generate email. Please try again.", "error");
       }
     } catch (err) {
-      output.textContent = "Error: " + err.message;
+      showOutput("Network error: " + err.message, "error");
+    } finally {
+      // Stop loading animation
+      generateBtn.classList.remove("loading");
+      generateBtn.disabled = false;
     }
   });
 });
