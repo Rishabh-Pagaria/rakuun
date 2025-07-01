@@ -3,6 +3,24 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 
+const cleanJsonResponse = (text: string) => {
+  let cleaned = text.trim();
+
+  // Remove various markdown code block formats
+  cleaned = cleaned.replace(/^```(?:json|javascript|js)?\s*/i, '');
+  cleaned = cleaned.replace(/\s*```\s*$/i, '');
+
+  // Remove any leading or trailing non-JSON characters
+  const jsonStart = cleaned.indexOf('{');
+  const jsonEnd = cleaned.lastIndexOf('}');
+
+  if (jsonStart !== -1 && jsonEnd !== -1 && jsonEnd > jsonStart) {
+    cleaned = cleaned.substring(jsonStart, jsonEnd + 1);
+  }
+
+  return cleaned.trim();
+}
+
 export async function POST(req: NextRequest) {
   const { selectedText } = await req.json();
 
@@ -41,13 +59,11 @@ export async function POST(req: NextRequest) {
 
   try{
     // Parse the JSON response from the model
-    const parseResponse = JSON.parse(text);
-    console.log(parseResponse);
-    
+    const cleanedText = cleanJsonResponse(text);
+    const parseResponse = JSON.parse(cleanedText);
     return NextResponse.json(parseResponse);
   } catch (error) {
     // Parsing fails, return the raw text as a fallback
-    console.log(error);
     return NextResponse.json({
       email: text,
       to: "Not found",
