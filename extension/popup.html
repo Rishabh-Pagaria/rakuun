@@ -7,11 +7,21 @@
   <body>
     <div class="container">
       <header class="header">
-        <h1 class="logo">📧 followUp</h1>
+        <h1 class="logo">followUp</h1>
         <p class="tagline">Generate personalized outreach emails</p>
       </header>
       
       <main class="main">
+        <div class="input-section">
+            <label for="to" class="label">To</label>
+            <input type="email" id="to" class="input" placeholder="Recipient email will appear here...">
+        </div>
+        
+        <div class="input-section">
+            <label for="subject" class="label">Subject</label>
+            <input type="text" id="subject" class="input" placeholder="Subject will be generated...">
+        </div>
+
         <div class="input-section">
           <label for="body" class="label">Selected Content</label>
           <textarea 

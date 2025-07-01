@@ -1,5 +1,7 @@
 document.addEventListener("DOMContentLoaded", () => {
   const bodyInput = document.getElementById("body");
+  const recipientEmail = document.getElementById("to");
+  const subjectEmail = document.getElementById("subject");
   const generateBtn = document.getElementById("generateBtn");
   const output = document.getElementById("output");
 
@@ -44,7 +46,12 @@ document.addEventListener("DOMContentLoaded", () => {
       const data = await res.json();
 
       if (data.email) {
-        bodyInput.value = data.email; // Replace textarea with generated email
+        // Replace textarea with generated email
+        bodyInput.value = data.email; 
+        // set subject field value with extarcted recipent's email
+        recipientEmail.value = data.to || "";
+        // set subject field value with generated subject
+        subjectEmail.value = data.subject || "";
         showOutput("Email generated successfully! You can edit it above.", "success");
       } else {
         showOutput(data.error || "Failed to generate email. Please try again.", "error");

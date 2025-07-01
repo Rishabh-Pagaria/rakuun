@@ -57,7 +57,7 @@ body {
   margin-bottom: 8px;
 }
 
-.textarea {
+.textarea, .input {
   width: 100%;
   padding: 12px;
   border: 2px solid #e1e5e9;
@@ -71,7 +71,7 @@ body {
   color: #333;
 }
 
-.textarea:focus {
+.textarea:focus, .input.focus {
   outline: none;
   border-color: #333;
   box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.1);
