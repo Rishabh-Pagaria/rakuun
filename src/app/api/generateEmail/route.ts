@@ -24,7 +24,21 @@ const cleanJsonResponse = (text: string) => {
 export async function POST(req: NextRequest) {
   const { selectedText } = await req.json();
 
-  const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+  const model = genAI.getGenerativeModel({ 
+    model: "gemini-2.5-flash",
+    generationConfig:{
+      responseMimeType: "application/json",
+      responseSchema: { 
+        type: "object",
+        properties: {
+          email: {type: "string"},
+          to: {type: "string"},
+          subject: {type: "string"}
+        },
+        required: ["email", "to", "subject"]
+      }
+    }
+  });
 
   // prompt to generate a personalized outreach email, extracting recipient's email and creating a subject line
   const prompt = `You are a helpful assistant that crafts personalized outreach emails.
@@ -44,30 +58,23 @@ export async function POST(req: NextRequest) {
                 - Shows the user has researched the recipient's background, interests, or work
                 - Includes placeholders like [Your Name], [Your Background], [Specific Reason for Contact]
                 - References specific details from the selected content
-                
-                Return your response only as a JSON format {key:value} pair as per the below exact JSON format:
-                {
-                  "email": "the email content here",
-                  "to": "recipient@email.com or 'Not found' if no email in content",
-                  "subject": "Generated subject line here"
-                }
-                
-                Generate now:
                 `; 
   const result = await model.generateContent(prompt);
-  const text = result.response.text();
+  // const text = result.response.text();
+  const response = JSON.parse(result.response.text());
+  return NextResponse.json(response);
 
-  try{
-    // Parse the JSON response from the model
-    const cleanedText = cleanJsonResponse(text);
-    const parseResponse = JSON.parse(cleanedText);
-    return NextResponse.json(parseResponse);
-  } catch (error) {
-    // Parsing fails, return the raw text as a fallback
-    return NextResponse.json({
-      email: text,
-      to: "Not found",
-      suject: "Colloboration Enquiry"
-    });
-  }
+  // try{
+  //   // Parse the JSON response from the model
+  //   const cleanedText = cleanJsonResponse(text);
+  //   const parseResponse = JSON.parse(cleanedText);
+  //   return NextResponse.json(parseResponse);
+  // } catch (error) {
+  //   // Parsing fails, return the raw text as a fallback
+  //   return NextResponse.json({
+  //     email: text,
+  //     to: "Not found",
+  //     suject: "Colloboration Enquiry"
+  //   });
+  // }
 }
