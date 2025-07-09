@@ -7,7 +7,7 @@
 body {
   font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
   background: #000000;
-  width: 380px;
+  width: 420px;
   min-height: 500px;
 }
 
@@ -79,13 +79,13 @@ body {
 
 .button-section {
   margin-bottom: 20px;
+  display: flex;
+  gap: 10px;
 }
 
-.generate-btn {
-  width: 100%;
+.generate-btn, .send-btn {
+  flex: 1;
   padding: 14px 20px;
-  background: #000000;
-  color: white;
   border: 2px solid #000000;
   border-radius: 8px;
   font-size: 14px;
@@ -96,6 +96,17 @@ body {
   overflow: hidden;
 }
 
+.generate-btn {
+  background: #000000;
+  color: white;
+}
+
+.send-btn {
+  background: #ffffff;
+  color: #000000;
+  border-color: #000000;
+}
+
 .generate-btn:hover {
   background: #333333;
   border-color: #333333;
@@ -103,16 +114,27 @@ body {
   box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
 }
 
-.generate-btn:active {
+.send-btn:hover:not(:disabled) {
+  background: #000000;
+  color: white;
+  transform: translateY(-1px);
+  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+}
+
+.generate-btn:active, .send-btn:active {
   transform: translateY(0);
 }
 
-.generate-btn:disabled {
+.generate-btn:disabled, .send-btn:disabled {
   opacity: 0.7;
   cursor: not-allowed;
   transform: none;
-  background: #666666;
-  border-color: #666666;
+}
+
+.send-btn:disabled {
+  background: #f5f5f5;
+  color: #999999;
+  border-color: #cccccc;
 }
 
 .btn-text {
@@ -124,13 +146,24 @@ body {
   width: 20px;
   height: 20px;
   border: 2px solid transparent;
-  border-top: 2px solid white;
   border-radius: 50%;
   animation: spin 1s linear infinite;
   position: absolute;
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
+}
+
+#spinner {
+  border-top: 2px solid white;
+}
+
+#sendSpinner {
+  border-top: 2px solid #000000;
+}
+
+.send-btn.loading #sendSpinner {
+  border-top: 2px solid white;
 }
 
 @keyframes spin {

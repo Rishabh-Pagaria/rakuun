@@ -4,6 +4,7 @@
   "version": "1.0",
   "description": "Generate personalized emails based on webpage content.",
   "permissions": ["scripting", "storage", "activeTab", "tabs"],
+  "host_permissions": ["http://localhost:3000/*"],
   "background": {
     "service_worker": "background.js"
   },
