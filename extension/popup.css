@@ -1,3 +1,4 @@
+@import url('https://fonts.googleapis.com/css2?family=Gaegu:wght@300;400;700&display=swap');
 * {
   margin: 0;
   padding: 0;
@@ -5,7 +6,7 @@
 }
 
 body {
-  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  font-family: 'Gaegu', sans-serif;
   background: #000000;
   width: 420px;
   min-height: 500px;
@@ -65,13 +66,6 @@ body {
   flex-direction: column;
 }
 
-.signin-screen .header {
-  background: #000000;
-  color: white;
-  padding: 30px 20px;
-  text-align: center;
-  border-bottom: 1px solid #e5e5e5;
-}
 
 .signin-main {
   flex: 1;
@@ -244,13 +238,27 @@ body {
   padding: 20px;
   text-align: center;
   border-bottom: 1px solid #e5e5e5;
+  display: flex;                    /* Enable flexbox */
+  align-items: center;              /* Vertically center items */
+  justify-content: center;          /* Horizontally center the group */
+  gap: 12px;   
+}
+
+/* Update logo image styles */
+.logo-image {
+  width: 48px;                     /* Appropriate size for header */
+  height: 48px;
+  border-radius: 8px;
+  margin: 0;                       /* Remove any default margins */
 }
 
 .logo {
-  font-size: 24px;
+  font-size: 24px;                 /* Keep existing size */
   font-weight: 700;
-  margin-bottom: 5px;
+  margin: 0;                       /* Remove margins for clean alignment */
   letter-spacing: -0.5px;
+  color: white;                    /* Ensure white text on black header */
+  line-height: 1;  
 }
 
 .tagline {
