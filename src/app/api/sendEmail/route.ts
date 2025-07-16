@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import nodemailer from "nodemailer";
+import {google} from "googleapis";
 
 export async function POST(req: NextRequest) {
   try {
-    const { to, subject, body } = await req.json();
+    const { to, subject, body, userToken } = await req.json();
 
     // Validate required fields
     if (!to || !subject || !body) {
@@ -11,6 +11,14 @@ export async function POST(req: NextRequest) {
         { error: "Missing required fields: to, subject, or body" },
         { status: 400 }
       );
+    }
+
+    // checks if user token is provided
+    if(!userToken) {
+        return NextResponse.json(
+            { error: "Missing user authentication token" },
+            { status: 401 }
+        );
     }
 
     // Basic email validation
@@ -22,42 +30,51 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Check if email environment variables are set
-    if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
-      return NextResponse.json(
-        { error: "Email configuration not set. Please configure EMAIL_USER and EMAIL_PASS in environment variables." },
-        { status: 500 }
-      );
-    }
+    // create oauth2 client
+    const oauthClient = new google.auth.OAuth2();
+    oauthClient.setCredentials({ access_token: userToken });
 
-    // Create transporter using Gmail SMTP
-    const transporter = nodemailer.createTransport({
-      service: 'gmail',
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS, // Use App Password for Gmail
-      },
+    // create gmail api instance
+    const gmail = google.gmail({ version: 'v1', auth: oauthClient });
+
+    // create email structure
+    const emailMessage = [
+        `To: ${to}`,
+        `Subject: ${subject}`,
+        '',
+        body
+    ].join('\n');
+
+    // Encode the email message
+    const encodedMessage = Buffer.from(emailMessage)
+      .toString('base64')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/, '');
+    
+    // send the email using gmail api
+    const result = await gmail.users.messages.send({
+        userId: 'me',
+        requestBody: {
+            raw: encodedMessage,
+        },
     });
-
-    // Email options
-    const mailOptions = {
-      from: process.env.EMAIL_USER,
-      to: to,
-      subject: subject,
-      text: body,
-      html: body.replace(/\n/g, '<br>'), // Convert line breaks to HTML
-    };
-
-    // Send email
-    const info = await transporter.sendMail(mailOptions);
 
     return NextResponse.json({
       success: true,
       message: "Email sent successfully",
-      messageId: info.messageId,
+      messageId: result.data.id,
     });
   } catch (error) {
     console.error('Error sending email:', error);
+
+    // specific error handling
+    if (error.code === 401) {
+        return NextResponse.json(
+            { error: "Authentication Failed, Sign in Again" },
+            { status: 401 }
+        );
+    }
     return NextResponse.json(
       { error: "Failed to send email: " + (error as Error).message },
       { status: 500 }
