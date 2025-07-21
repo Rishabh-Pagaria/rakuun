@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { log } from "console";
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 
@@ -25,7 +26,7 @@ export async function POST(req: NextRequest) {
   const { selectedText } = await req.json();
 
   const model = genAI.getGenerativeModel({ 
-    model: "gemini-2.5-flash",
+    model: "gemini-2.5-flash-lite-preview-06-17",
     generationConfig:{
       responseMimeType: "application/json",
       responseSchema: { 
