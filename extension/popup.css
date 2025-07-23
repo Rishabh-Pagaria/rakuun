@@ -270,6 +270,45 @@ body {
 .main {
   padding: 20px;
 }
+/* Add styles for context selection */
+.context-select {
+  width: 100%;
+  padding: 12px;
+  border: 2px solid #e1e5e9;
+  border-radius: 8px;
+  font-size: 13px;
+  font-family: inherit;
+  background: #ffffff;
+  color: #333;
+  cursor: pointer;
+  transition: border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+.context-select:focus {
+  outline: none;
+  border-color: #333;
+  box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.1);
+}
+
+.context-select:hover {
+  border-color: #666;
+}
+
+/* Style for selected option */
+.context-select option {
+  padding: 8px;
+  background: white;
+  color: #333;
+}
+
+.context-select option:checked {
+  background: #f0f0f0;
+}
+
+/* Add some visual feedback for context selection */
+.input-section:has(.context-select) {
+  margin-bottom: 24px; /* Extra space for important field */
+}
 
 .input-section {
   margin-bottom: 20px;

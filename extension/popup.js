@@ -18,6 +18,7 @@ const subjectEmail = document.getElementById("subject");
 const generateBtn = document.getElementById("generateBtn");
 const sendBtn = document.getElementById("sendBtn");
 const output = document.getElementById("output");
+const contextSelect = document.getElementById("context");
 
 document.addEventListener("DOMContentLoaded", () => {
   // Initialize authentication first, because this will determine based on the session token if the user is logged in or not
@@ -204,6 +205,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (recipientEmail) recipientEmail.addEventListener("input", checkSendButtonState);
     if (subjectEmail) subjectEmail.addEventListener("input", checkSendButtonState);
     if (bodyInput) bodyInput.addEventListener("input", checkSendButtonState);
+    if (contextSelect) contextSelect.addEventListener("change", checkSendButtonState);
     if (generateBtn) generateBtn.addEventListener("click", handleGenerateEmail);
     if (sendBtn) sendBtn.addEventListener("click", handleSendEmail);
 
@@ -241,6 +243,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   async function handleGenerateEmail(){
     const selectedText = bodyInput.value.trim();
+    const selectedContext = contextSelect.value;
     
     if (!selectedText) {
       showOutput("Please enter or select some text first.", "error");
@@ -257,7 +260,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const res = await fetch("http://localhost:3000/api/generateEmail", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ selectedText, userToken }),
+        body: JSON.stringify({ selectedText, userToken, selectedContext}),
       });
 
       const data = await res.json();
