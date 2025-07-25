@@ -2,6 +2,9 @@
 
 // managing the state for authentication
 let currentUser = null;
+let originalSelectedText = null;
+let lastGeneratedContext = null;
+let isEmailGenerated = false;
 
 // DOM elements for authentication
 const signinScreen = document.getElementById("signin-screen");
@@ -197,7 +200,9 @@ document.addEventListener("DOMContentLoaded", () => {
     // Load selected text from chrome.storage.local into textarea
     chrome.storage.local.get(["selectedText"], (result) => {
       if (result.selectedText && bodyInput) {
-        bodyInput.value = result.selectedText;
+        originalSelectedText = result.selectedText; // Store the original selected text
+        bodyInput.value = result.selectedText; // Set the textarea value to the selected text
+        isEmailGenerated = false;
       }
     });
 
@@ -205,11 +210,27 @@ document.addEventListener("DOMContentLoaded", () => {
     if (recipientEmail) recipientEmail.addEventListener("input", checkSendButtonState);
     if (subjectEmail) subjectEmail.addEventListener("input", checkSendButtonState);
     if (bodyInput) bodyInput.addEventListener("input", checkSendButtonState);
-    if (contextSelect) contextSelect.addEventListener("change", checkSendButtonState);
+    if (contextSelect) contextSelect.addEventListener("change", handleContextChange);
     if (generateBtn) generateBtn.addEventListener("click", handleGenerateEmail);
     if (sendBtn) sendBtn.addEventListener("click", handleSendEmail);
 
     // Initial check for send button state
+    checkSendButtonState();
+  }
+
+  // Handle context change event with automatic email generation
+  async function handleContextChange() {
+    const newContext = contextSelect.value;
+
+    // checking if the context has changed and if the email is generated
+    if(isEmailGenerated && originalSelectedText && newContext !== lastGeneratedContext){
+
+      console.log(`Context changed from "${lastGeneratedContext}" to "${newContext}" - Auto-regenerating...`);
+      // regeneration indicator
+      showOutput(`Updating email for ${getContextDisplayName(newContext)} context...`,"");
+
+      await generateEmailWithContext(newContext);
+    }
     checkSendButtonState();
   }
 
@@ -242,14 +263,19 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   async function handleGenerateEmail(){
-    const selectedText = bodyInput.value.trim();
+    // use original text if available, otherwise use the current body text value
+    const selectedText = originalSelectedText || bodyInput.value.trim();
     const selectedContext = contextSelect.value;
     
     if (!selectedText) {
       showOutput("Please enter or select some text first.", "error");
       return;
     }
+    await generateEmailWithContext(selectedContext, selectedText);
+  }
 
+async function generateEmailWithContext(context, textToUse = null) {
+  const selectedText = textToUse || originalSelectedText || bodyInput.value.trim();
     // Start loading animation
     generateBtn.classList.add("loading");
     generateBtn.disabled = true;
@@ -260,7 +286,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const res = await fetch("http://localhost:3000/api/generateEmail", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ selectedText, userToken, selectedContext}),
+        body: JSON.stringify({ selectedText, userToken, context:context}),
       });
 
       const data = await res.json();
@@ -272,6 +298,10 @@ document.addEventListener("DOMContentLoaded", () => {
         recipientEmail.value = data.to || "";
         // set subject field value with generated subject
         subjectEmail.value = data.subject || "";
+
+        // track email generation state
+        isEmailGenerated = true;
+        lastGeneratedContext = context; // Store the last used context
         showOutput("Email generated successfully! You can edit it above.", "success");
         
         // Check if send button should be enabled after generation
@@ -327,3 +357,28 @@ document.addEventListener("DOMContentLoaded", () => {
       checkSendButtonState(); // Re-enable button based on current state
     }
   }
+
+  // Helper function to get context display name
+  const getContextDisplayName = (context) => {
+    const names = {
+        'job_application': 'Job application',
+        'research_collaboration': 'Research collaboration', 
+        'ta_application': 'TA application',
+        'internship_inquiry': 'Internship inquiry',
+        'networking': 'Professional networking',
+        'phd_inquiry': 'PhD inquiry',
+        'conference_meeting': 'Conference meeting',
+        'guest_lecture': 'Guest lecture'
+    };
+    return names[context] || 'Professional';
+  }
+
+  // ✅ Add reset function if user wants to start over
+function resetToOriginalText() {
+    if (originalSelectedText) {
+        bodyInput.value = originalSelectedText;
+        isEmailGenerated = false;
+        lastGeneratedContext = null;
+        showOutput("Reset to original selected text.", "success");
+    }
+}
