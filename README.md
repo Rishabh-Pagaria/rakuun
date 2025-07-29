@@ -1,4 +1,4 @@
-# followUp
+# rakuun
 This is a chrome extension which selects the DOM based HTML content and generate personalized email.
 Clone the directory 
 ```
