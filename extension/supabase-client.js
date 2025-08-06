@@ -3,8 +3,8 @@
 
 class SupabaseExtensionClient {
   constructor() {
-    this.supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    this.supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    this.supabaseUrl = CONFIG.NEXT_PUBLIC_SUPABASE_URL;
+    this.supabaseAnonKey = CONFIG.NEXT_PUBLIC_SUPABASE_ANON_KEY;
     this.apiUrl = `${this.supabaseUrl}/auth/v1`;
   }
 
