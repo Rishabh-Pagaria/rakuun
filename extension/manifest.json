@@ -3,32 +3,22 @@
   "name": "Rakuun",
   "version": "1.0",
   "description": "Generate personalized emails based on webpage content.",
-  "permissions": ["storage", "activeTab","identity","identity.email"],
-  "icons":{
+  "permissions": ["storage", "identity", "activeTab", "scripting"],
+  "icons": {
     "128": "icons/logo.png"
   },
   "host_permissions": [
     "http://localhost:3000/*",
-    "https://www.googleapis.com/*"
+    "https://*.supabase.co/*",
+    "https://oauth2.googleapis.com/*"
   ],
-  "oauth2":{
+  "oauth2": {
     "client_id": "1057486909312-gfun245scq0sf99nc7g8p857dbb5i7m0.apps.googleusercontent.com",
     "scopes": [
-      "https://www.googleapis.com/auth/userinfo.email",
-      "https://www.googleapis.com/auth/userinfo.profile",
       "https://www.googleapis.com/auth/gmail.send"
     ]
   },
-  "background": {
-    "service_worker": "background.js"
-  },
   "action": {
     "default_popup": "popup.html"
-  },
-  "content_scripts": [
-    {
-      "matches": ["<all_urls>"],
-      "js": ["contentScript.js"]
-    }
-  ]
+  }
 }

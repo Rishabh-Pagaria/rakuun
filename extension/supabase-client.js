@@ -1,194 +1,285 @@
-// Supabase client for Chrome Extension
-// This will be used in the extension popup and background scripts
+// Supabase Auth client for the Rakuun Chrome extension.
+//
+// This handles IDENTITY ONLY (ADR-003, ADR-008): it establishes who the user
+// is and yields a Supabase access token to send to the Rakuun API, so RLS can
+// key off auth.uid(). Gmail access is a deliberately separate concern brokered
+// by Chrome - see gmail-auth.js for why.
+//
+// Sign-in uses the OAuth authorization code flow with PKCE, driven by
+// chrome.identity.launchWebAuthFlow so the user sees a real Google consent
+// screen. A background fetch() cannot do this: /authorize responds with a
+// redirect into interactive UI, not JSON.
+
+const SESSION_STORAGE_KEY = 'supabase_session';
+
+// Refresh slightly before actual expiry so a request can't die in flight.
+const EXPIRY_SKEW_SECONDS = 60;
+
+// Keys written by the pre-ADR-006 auth flow, cleared on sign-out so a stale
+// Google token can't be mistaken for a valid session.
+const LEGACY_STORAGE_KEYS = [
+  'userToken',
+  'userInfo',
+  'tokenExpiry',
+  'supabase_expires_at',
+  'selectedText'
+];
+
+function base64UrlEncode(bytes) {
+  let binary = '';
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+// PKCE verifier: 64 random bytes -> 86 base64url chars, inside the 43-128
+// range RFC 7636 allows.
+function createCodeVerifier() {
+  return base64UrlEncode(crypto.getRandomValues(new Uint8Array(64)));
+}
+
+async function deriveCodeChallenge(codeVerifier) {
+  const digest = await crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(codeVerifier)
+  );
+  return base64UrlEncode(new Uint8Array(digest));
+}
+
+function launchWebAuthFlow(url) {
+  return new Promise((resolve, reject) => {
+    chrome.identity.launchWebAuthFlow({ url, interactive: true }, (redirectUrl) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+      } else if (!redirectUrl) {
+        reject(new Error('Sign-in was cancelled.'));
+      } else {
+        resolve(redirectUrl);
+      }
+    });
+  });
+}
 
 class SupabaseExtensionClient {
   constructor() {
-    this.supabaseUrl = CONFIG.NEXT_PUBLIC_SUPABASE_URL;
-    this.supabaseAnonKey = CONFIG.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-    this.apiUrl = `${this.supabaseUrl}/auth/v1`;
+    // Read lazily-tolerant: if config.js is missing we want a clear error at
+    // call time, not a ReferenceError while the popup is still loading.
+    const config = (typeof CONFIG !== 'undefined' && CONFIG) || {};
+    this.supabaseUrl = config.SUPABASE_URL || '';
+    this.supabaseAnonKey = config.SUPABASE_ANON_KEY || '';
+    this.authUrl = `${this.supabaseUrl}/auth/v1`;
+    this.refreshInFlight = null;
   }
 
-  // Initialize Supabase Auth with Google provider
+  isConfigured() {
+    return Boolean(this.supabaseUrl && this.supabaseAnonKey);
+  }
+
+  // The URL Supabase must redirect back to. Chrome only auto-closes the auth
+  // window for https://<extension-id>.chromiumapp.org/* - a chrome-extension://
+  // URL leaves the flow hanging forever.
+  getRedirectUrl() {
+    return chrome.identity.getRedirectURL();
+  }
+
+  buildHeaders(extraHeaders = {}) {
+    return {
+      apikey: this.supabaseAnonKey,
+      Authorization: `Bearer ${this.supabaseAnonKey}`,
+      'Content-Type': 'application/json',
+      ...extraHeaders
+    };
+  }
+
   async signInWithGoogle() {
+    if (!this.isConfigured()) {
+      throw new Error('Extension config missing. Run: npm run build:extension');
+    }
+
+    const codeVerifier = createCodeVerifier();
+    const codeChallenge = await deriveCodeChallenge(codeVerifier);
+    const redirectUrl = this.getRedirectUrl();
+
+    const authorizeUrl = `${this.authUrl}/authorize?${new URLSearchParams({
+      provider: 'google',
+      redirect_to: redirectUrl,
+      code_challenge: codeChallenge,
+      code_challenge_method: 's256'
+    })}`;
+
+    let redirectResponse;
     try {
-      const response = await fetch(`${this.apiUrl}/authorize?provider=google&redirect_to=${encodeURIComponent('chrome-extension://your-extension-id/popup.html')}`, {
-        method: 'GET',
-        headers: {
-          'apikey': this.supabaseAnonKey,
-          'Content-Type': 'application/json'
-        }
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to initiate Google sign-in');
-      }
-
-      const data = await response.json();
-      return data;
+      redirectResponse = await launchWebAuthFlow(authorizeUrl);
     } catch (error) {
-      console.error('Error signing in with Google:', error);
+      // By far the most common cause is the redirect URL not being on
+      // Supabase's allow-list, which presents as a window that never closes.
+      console.error(
+        `Sign-in flow failed. Confirm this exact URL is listed under Supabase ` +
+          `Authentication > URL Configuration > Redirect URLs:\n  ${redirectUrl}`
+      );
       throw error;
     }
+
+    // The verifier never leaves this function scope, so there's nothing to
+    // persist and nothing to clean up if the user abandons the flow.
+    return this.exchangeCodeForSession(redirectResponse, codeVerifier);
   }
 
-  // Exchange authorization code for session
-  async exchangeCodeForSession(code) {
-    try {
-      const response = await fetch(`${this.apiUrl}/token?grant_type=authorization_code`, {
-        method: 'POST',
-        headers: {
-          'apikey': this.supabaseAnonKey,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          auth_code: code,
-          code_verifier: '', // We'll implement PKCE if needed
-        })
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to exchange code for session');
-      }
-
-      const session = await response.json();
-      
-      // Store session in chrome.storage.local
-      await chrome.storage.local.set({
-        supabase_session: session,
-        supabase_expires_at: session.expires_at
-      });
-
-      return session;
-    } catch (error) {
-      console.error('Error exchanging code for session:', error);
-      throw error;
+  async exchangeCodeForSession(redirectResponse, codeVerifier) {
+    const params = new URL(redirectResponse).searchParams;
+    const errorDescription = params.get('error_description') || params.get('error');
+    if (errorDescription) {
+      throw new Error(errorDescription);
     }
+
+    const code = params.get('code');
+    if (!code) {
+      throw new Error('Sign-in did not return an authorization code.');
+    }
+
+    const response = await fetch(`${this.authUrl}/token?grant_type=pkce`, {
+      method: 'POST',
+      headers: this.buildHeaders(),
+      body: JSON.stringify({ auth_code: code, code_verifier: codeVerifier })
+    });
+
+    if (!response.ok) {
+      throw new Error(await this.describeAuthError(response, 'Failed to complete sign-in'));
+    }
+
+    return this.storeSession(await response.json());
   }
 
-  // Get current session from storage
+  // Normalizes and persists a session. GoTrue returns expires_at, but derive
+  // it from expires_in when absent so expiry checks never silently pass.
+  async storeSession(session) {
+    if (!session || !session.access_token) {
+      throw new Error('Supabase returned an invalid session.');
+    }
+
+    const normalized = {
+      ...session,
+      expires_at:
+        session.expires_at ||
+        Math.floor(Date.now() / 1000) + (session.expires_in || 3600)
+    };
+
+    await chrome.storage.local.set({ [SESSION_STORAGE_KEY]: normalized });
+    return normalized;
+  }
+
+  async clearSession() {
+    await chrome.storage.local.remove([SESSION_STORAGE_KEY, ...LEGACY_STORAGE_KEYS]);
+  }
+
+  // Returns a valid session, refreshing if needed, or null if the user needs
+  // to sign in again.
   async getSession() {
-    try {
-      const result = await chrome.storage.local.get(['supabase_session', 'supabase_expires_at']);
-      
-      if (result.supabase_session && result.supabase_expires_at) {
-        const now = Math.floor(Date.now() / 1000);
-        
-        if (now < result.supabase_expires_at) {
-          return result.supabase_session;
-        } else {
-          // Session expired, try to refresh
-          return await this.refreshSession(result.supabase_session.refresh_token);
-        }
-      }
-      
-      return null;
-    } catch (error) {
-      console.error('Error getting session:', error);
+    const stored = await chrome.storage.local.get(SESSION_STORAGE_KEY);
+    const session = stored[SESSION_STORAGE_KEY];
+
+    if (!session || !session.access_token) {
       return null;
     }
-  }
 
-  // Refresh session using refresh token
-  async refreshSession(refreshToken) {
-    try {
-      const response = await fetch(`${this.apiUrl}/token?grant_type=refresh_token`, {
-        method: 'POST',
-        headers: {
-          'apikey': this.supabaseAnonKey,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          refresh_token: refreshToken
-        })
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to refresh session');
-      }
-
-      const session = await response.json();
-      
-      // Update stored session
-      await chrome.storage.local.set({
-        supabase_session: session,
-        supabase_expires_at: session.expires_at
-      });
-
+    const now = Math.floor(Date.now() / 1000);
+    if (now < session.expires_at - EXPIRY_SKEW_SECONDS) {
       return session;
-    } catch (error) {
-      console.error('Error refreshing session:', error);
-      await this.signOut();
+    }
+
+    if (!session.refresh_token) {
+      await this.clearSession();
       return null;
     }
+
+    return this.refreshSession(session.refresh_token);
   }
 
-  // Sign out user
+  // Single-flight: the popup can ask for a session from two places at once
+  // (generate and send), and a refresh token is single-use.
+  async refreshSession(refreshToken) {
+    if (this.refreshInFlight) {
+      return this.refreshInFlight;
+    }
+
+    this.refreshInFlight = (async () => {
+      try {
+        const response = await fetch(`${this.authUrl}/token?grant_type=refresh_token`, {
+          method: 'POST',
+          headers: this.buildHeaders(),
+          body: JSON.stringify({ refresh_token: refreshToken })
+        });
+
+        if (!response.ok) {
+          throw new Error(await this.describeAuthError(response, 'Session refresh failed'));
+        }
+
+        return await this.storeSession(await response.json());
+      } catch (error) {
+        console.error('Error refreshing session:', error);
+        await this.clearSession();
+        return null;
+      } finally {
+        this.refreshInFlight = null;
+      }
+    })();
+
+    return this.refreshInFlight;
+  }
+
+  async getAccessToken() {
+    const session = await this.getSession();
+    return session ? session.access_token : null;
+  }
+
+  // User details come straight off the stored session - no extra network call
+  // to Google's userinfo endpoint is needed.
+  async getUser() {
+    const session = await this.getSession();
+    if (!session || !session.user) {
+      return null;
+    }
+
+    const metadata = session.user.user_metadata || {};
+    return {
+      id: session.user.id,
+      email: session.user.email,
+      name: metadata.full_name || metadata.name || session.user.email,
+      picture: metadata.avatar_url || metadata.picture || null
+    };
+  }
+
   async signOut() {
     try {
-      const session = await this.getSession();
-      
-      if (session) {
-        await fetch(`${this.apiUrl}/logout`, {
+      const stored = await chrome.storage.local.get(SESSION_STORAGE_KEY);
+      const session = stored[SESSION_STORAGE_KEY];
+
+      if (session && session.access_token) {
+        await fetch(`${this.authUrl}/logout`, {
           method: 'POST',
-          headers: {
-            'apikey': this.supabaseAnonKey,
-            'Authorization': `Bearer ${session.access_token}`,
-            'Content-Type': 'application/json'
-          }
+          headers: this.buildHeaders({ Authorization: `Bearer ${session.access_token}` })
         });
       }
-      
-      // Clear stored session
-      await chrome.storage.local.remove(['supabase_session', 'supabase_expires_at']);
     } catch (error) {
-      console.error('Error signing out:', error);
+      // Revoking server-side is best effort; clearing locally is not.
+      console.error('Error signing out of Supabase:', error);
+    } finally {
+      await this.clearSession();
     }
   }
 
-  // Get user info from current session
-  async getUser() {
+  async describeAuthError(response, fallbackMessage) {
     try {
-      const session = await this.getSession();
-      
-      if (!session) {
-        return null;
+      const body = await response.json();
+      const detail = body.error_description || body.msg || body.error;
+      if (detail) {
+        return `${fallbackMessage}: ${detail}`;
       }
-
-      const response = await fetch(`${this.apiUrl}/user`, {
-        method: 'GET',
-        headers: {
-          'apikey': this.supabaseAnonKey,
-          'Authorization': `Bearer ${session.access_token}`,
-        }
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to get user info');
-      }
-
-      const user = await response.json();
-      return user;
-    } catch (error) {
-      console.error('Error getting user:', error);
-      return null;
+    } catch {
+      // Non-JSON error body; fall through to the generic message.
     }
-  }
-
-  // Get access token for Gmail API
-  async getGmailAccessToken() {
-    try {
-      const session = await this.getSession();
-      
-      if (!session) {
-        throw new Error('No active session');
-      }
-
-      // The provider_token contains the Google OAuth token for Gmail API
-      return session.provider_token;
-    } catch (error) {
-      console.error('Error getting Gmail access token:', error);
-      throw error;
-    }
+    return `${fallbackMessage} (HTTP ${response.status})`;
   }
 }
 
