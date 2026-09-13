@@ -1,10 +1,5 @@
-// Rakuun extension popup.
-//
-// Auth split (ADR-008): Supabase Auth answers "who is this user" and supplies
-// the bearer token sent to the Rakuun API; Chrome's identity API supplies the
-// gmail.send token. See supabase-client.js and gmail-auth.js.
+// ADR-008: Supabase Auth for identity, Chrome's identity API for gmail.send.
 
-// managing the state for authentication
 let currentUser = null;
 let originalSelectedText = null;
 let lastGeneratedContext = null;
@@ -28,15 +23,11 @@ const output = document.getElementById("output");
 const contextSelect = document.getElementById("context");
 
 document.addEventListener("DOMContentLoaded", () => {
-  // Initialize authentication first, because this determines whether the user
-  // has a valid Supabase session and therefore which screen to show.
   initializeAuthentication();
 });
 
-// The authentication flow
 async function initializeAuthentication() {
-  // Event listeners go on first so the sign-in button works even if the
-  // session check below fails.
+  // Bound first so sign-in still works if the session check throws.
   setupAuthEventListeners();
 
   if (typeof CONFIG === "undefined" || !supabaseExtension.isConfigured()) {
@@ -50,8 +41,7 @@ async function initializeAuthentication() {
   }
 
   try {
-    // getSession() refreshes an expired session automatically and returns null
-    // only when the user genuinely has to sign in again.
+    // getUser() refreshes automatically; null means sign-in is genuinely needed.
     currentUser = await supabaseExtension.getUser();
 
     if (currentUser) {
@@ -59,12 +49,38 @@ async function initializeAuthentication() {
       await initializeMainApp();
     } else {
       showSignInScreen();
+      await showStoredAuthError();
     }
   } catch (error) {
     console.error("Error initializing authentication:", error);
     showSignInScreen();
   }
 }
+
+async function showStoredAuthError() {
+  const { auth_error: authError } = await chrome.storage.local.get("auth_error");
+  if (authError) {
+    await chrome.storage.local.remove("auth_error");
+    showOutput("Sign-in failed: " + authError, "error");
+  }
+}
+
+// Picks up the worker's result in the rarer case the popup survived sign-in.
+chrome.storage.onChanged.addListener(async (changes, areaName) => {
+  if (areaName !== "local" || currentUser) return;
+
+  if (changes.supabase_session && changes.supabase_session.newValue) {
+    currentUser = await supabaseExtension.getUser();
+    if (currentUser) {
+      hideOutput();
+      showMainScreen();
+      await initializeMainApp();
+    }
+  } else if (changes.auth_error && changes.auth_error.newValue) {
+    resetSignInButton();
+    await showStoredAuthError();
+  }
+});
 
 const setupAuthEventListeners = () => {
   if (signinButton) {
@@ -75,23 +91,26 @@ const setupAuthEventListeners = () => {
   }
 };
 
-// handle Google sign-in process
 async function handleSignIn() {
   try {
     if (!chrome.identity) {
       throw new Error("Chrome Identity API is not available. Please check manifest.json permissions.");
     }
 
-    // disables the button and shows loading animation
     signinButton.disabled = true;
     signinButton.innerHTML = `
       <div class="button-spinner"></div>
       Signing in...
     `;
 
-    await supabaseExtension.signInWithGoogle();
-    currentUser = await supabaseExtension.getUser();
+    // Runs in the worker; this promise never settles if the popup gets closed.
+    const result = await chrome.runtime.sendMessage({ type: "SIGN_IN" });
 
+    if (!result || !result.ok) {
+      throw new Error((result && result.error) || "Sign-in failed.");
+    }
+
+    currentUser = await supabaseExtension.getUser();
     if (!currentUser) {
       throw new Error("Signed in, but no session was stored.");
     }
@@ -106,11 +125,8 @@ async function handleSignIn() {
   }
 }
 
-// Handling sign-out process
 async function handleSignOut() {
   try {
-    // Both credentials have to go: the Supabase session that identifies the
-    // user, and the Google grant that lets us send mail as them.
     await supabaseExtension.signOut();
     await gmailAuth.revoke();
   } catch (error) {
@@ -125,23 +141,19 @@ async function handleSignOut() {
   }
 }
 
-// show main sccreen
 const showMainScreen = () => {
   if (signinScreen) signinScreen.style.display = "none";
   if (mainScreen) mainScreen.style.display = "block";
 
-  // Update user info in the main screen
   if (currentUser && userAvatar && userName) {
     userAvatar.src = currentUser.picture || "icons/logo.png";
     userName.textContent = currentUser.name || "User";
   }
 };
 
-// show sign-in screen
 const showSignInScreen = () => {
   if (signinScreen) signinScreen.style.display = "block";
   if (mainScreen) mainScreen.style.display = "none";
-  // Reset user info in the sign-in screen
   resetSignInButton();
 };
 
@@ -166,8 +178,7 @@ const clearComposeFields = () => {
   if (subjectEmail) subjectEmail.value = "";
 };
 
-// Reads the current selection straight out of the active tab when the popup
-// opens. Nothing is captured or stored until the user actually opens Rakuun.
+// Read on demand under activeTab, so nothing is captured until Rakuun is opened.
 async function readSelectionFromActiveTab() {
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -180,16 +191,20 @@ async function readSelectionFromActiveTab() {
 
     return (injection && injection.result) || "";
   } catch (error) {
-    // Injection is blocked on chrome:// pages, the Web Store, and PDF viewers.
+    // Blocked on chrome:// pages, the Web Store, and PDF viewers.
     console.debug("Could not read the page selection:", error.message);
     return "";
   }
 }
 
-// Initialize the main application after authentication
+// Reachable from startup and from the storage listener, so it must not bind twice.
+let mainAppInitialized = false;
+
 const initializeMainApp = async () => {
-  // Set up event listeners before the await so the UI is responsive while the
-  // selection is being read.
+  if (mainAppInitialized) return;
+  mainAppInitialized = true;
+
+  // Bound before the await so the UI responds while the selection loads.
   if (recipientEmail) recipientEmail.addEventListener("input", checkSendButtonState);
   if (subjectEmail) subjectEmail.addEventListener("input", checkSendButtonState);
   if (bodyInput) bodyInput.addEventListener("input", checkSendButtonState);
@@ -199,29 +214,24 @@ const initializeMainApp = async () => {
 
   const selectedText = await readSelectionFromActiveTab();
   if (selectedText && bodyInput) {
-    originalSelectedText = selectedText; // Store the original selected text
-    bodyInput.value = selectedText; // Set the textarea value to the selected text
+    originalSelectedText = selectedText;
+    bodyInput.value = selectedText;
     isEmailGenerated = false;
   }
 
-  // Initial check for send button state
   checkSendButtonState();
 };
 
-// Handle context change event with automatic email generation
 async function handleContextChange() {
   const newContext = contextSelect.value;
 
-  // checking if the context has changed and if the email is generated
   if (isEmailGenerated && originalSelectedText && newContext !== lastGeneratedContext) {
-    // regeneration indicator
     showOutput(`Updating email for ${getContextDisplayName(newContext)} context...`, "");
     await generateEmailWithContext(newContext);
   }
   checkSendButtonState();
 }
 
-// Check if send button should be enabled
 const checkSendButtonState = () => {
   if (!recipientEmail || !subjectEmail || !bodyInput || !sendBtn) return;
   const hasEmail = recipientEmail.value.trim() !== "";
@@ -231,7 +241,6 @@ const checkSendButtonState = () => {
   sendBtn.disabled = !(hasEmail && hasSubject && hasBody);
 };
 
-// Show output with animation
 function showOutput(message, type = "") {
   if (output) {
     output.textContent = message;
@@ -239,13 +248,11 @@ function showOutput(message, type = "") {
   }
 }
 
-// Hide output
 function hideOutput() {
   if (output) output.className = "output";
 }
 
-// Raised when there is no usable Supabase session left, so callers can drop
-// the user back to the sign-in screen instead of showing a generic error.
+// Lets callers drop back to the sign-in screen instead of a generic error.
 class SessionExpiredError extends Error {
   constructor() {
     super("Your session expired. Please sign in again.");
@@ -253,8 +260,7 @@ class SessionExpiredError extends Error {
   }
 }
 
-// Every API call carries the Supabase access token so the backend can resolve
-// auth.uid() rather than trusting a user id from the request body (ADR-002).
+// Bearer token lets the backend resolve auth.uid() rather than trust the body.
 async function apiFetch(path, payload) {
   const accessToken = await supabaseExtension.getAccessToken();
   if (!accessToken) {
@@ -279,7 +285,6 @@ async function handleSessionExpired() {
 }
 
 async function handleGenerateEmail() {
-  // use original text if available, otherwise use the current body text value
   const selectedText = originalSelectedText || bodyInput.value.trim();
   const selectedContext = contextSelect.value;
 
@@ -293,7 +298,6 @@ async function handleGenerateEmail() {
 async function generateEmailWithContext(context, textToUse = null) {
   const selectedText = textToUse || originalSelectedText || bodyInput.value.trim();
 
-  // Start loading animation
   generateBtn.classList.add("loading");
   generateBtn.disabled = true;
   showOutput("Generating your personalized email...");
@@ -303,19 +307,14 @@ async function generateEmailWithContext(context, textToUse = null) {
     const data = await res.json().catch(() => ({}));
 
     if (res.ok && data.email) {
-      // Replace textarea with generated email
       bodyInput.value = data.email;
-      // set recipient field value with extracted recipient's email
       recipientEmail.value = data.to || "";
-      // set subject field value with generated subject
       subjectEmail.value = data.subject || "";
 
-      // track email generation state
       isEmailGenerated = true;
-      lastGeneratedContext = context; // Store the last used context
+      lastGeneratedContext = context;
       showOutput("Email generated successfully! You can edit it above.", "success");
 
-      // Check if send button should be enabled after generation
       checkSendButtonState();
     } else {
       showOutput(data.error || "Failed to generate email. Please try again.", "error");
@@ -327,15 +326,12 @@ async function generateEmailWithContext(context, textToUse = null) {
     }
     showOutput("Network error: " + err.message, "error");
   } finally {
-    // Stop loading animation
     generateBtn.classList.remove("loading");
     generateBtn.disabled = false;
   }
 }
 
-// Sends via the API, retrying once with a fresh Gmail token. Chrome hands back
-// a cached token that Google may have already expired or revoked, and the only
-// way to find out is the 401 - so recover from it instead of stranding the user.
+// Chrome can hand back a token Google already revoked; the 401 is the only tell.
 async function postEmail(payload, { allowRetry = true } = {}) {
   const gmailToken = await gmailAuth.getAccessToken();
   const res = await apiFetch("/api/sendEmail", { ...payload, userToken: gmailToken });
@@ -359,7 +355,6 @@ async function handleSendEmail() {
     return;
   }
 
-  // Start loading animation
   sendBtn.classList.add("loading");
   sendBtn.disabled = true;
   showOutput("Sending email...");
@@ -379,13 +374,11 @@ async function handleSendEmail() {
     }
     showOutput("Network error: " + err.message, "error");
   } finally {
-    // Stop loading animation
     sendBtn.classList.remove("loading");
-    checkSendButtonState(); // Re-enable button based on current state
+    checkSendButtonState();
   }
 }
 
-// Helper function to get context display name
 const getContextDisplayName = (context) => {
   const names = {
     job_application: "Job application",

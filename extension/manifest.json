@@ -13,10 +13,13 @@
     "https://oauth2.googleapis.com/*"
   ],
   "oauth2": {
-    "client_id": "1057486909312-gfun245scq0sf99nc7g8p857dbb5i7m0.apps.googleusercontent.com",
+    "client_id": "1057486909312-1lmkbmkj5iidc6rd2o9r9tr6la4pv1e6.apps.googleusercontent.com",
     "scopes": [
       "https://www.googleapis.com/auth/gmail.send"
     ]
+  },
+  "background": {
+    "service_worker": "background.js"
   },
   "action": {
     "default_popup": "popup.html"

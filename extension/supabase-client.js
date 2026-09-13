@@ -1,22 +1,10 @@
-// Supabase Auth client for the Rakuun Chrome extension.
-//
-// This handles IDENTITY ONLY (ADR-003, ADR-008): it establishes who the user
-// is and yields a Supabase access token to send to the Rakuun API, so RLS can
-// key off auth.uid(). Gmail access is a deliberately separate concern brokered
-// by Chrome - see gmail-auth.js for why.
-//
-// Sign-in uses the OAuth authorization code flow with PKCE, driven by
-// chrome.identity.launchWebAuthFlow so the user sees a real Google consent
-// screen. A background fetch() cannot do this: /authorize responds with a
-// redirect into interactive UI, not JSON.
+// Supabase Auth: identity only (ADR-003, ADR-008). Gmail lives in gmail-auth.js.
 
 const SESSION_STORAGE_KEY = 'supabase_session';
-
-// Refresh slightly before actual expiry so a request can't die in flight.
 const EXPIRY_SKEW_SECONDS = 60;
 
-// Keys written by the pre-ADR-006 auth flow, cleared on sign-out so a stale
-// Google token can't be mistaken for a valid session.
+// Written by the pre-ADR-006 flow; cleared so a stale Google token can't look
+// like a valid session.
 const LEGACY_STORAGE_KEYS = [
   'userToken',
   'userInfo',
@@ -33,8 +21,7 @@ function base64UrlEncode(bytes) {
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-// PKCE verifier: 64 random bytes -> 86 base64url chars, inside the 43-128
-// range RFC 7636 allows.
+// 64 bytes -> 86 base64url chars, inside RFC 7636's 43-128 range.
 function createCodeVerifier() {
   return base64UrlEncode(crypto.getRandomValues(new Uint8Array(64)));
 }
@@ -63,8 +50,8 @@ function launchWebAuthFlow(url) {
 
 class SupabaseExtensionClient {
   constructor() {
-    // Read lazily-tolerant: if config.js is missing we want a clear error at
-    // call time, not a ReferenceError while the popup is still loading.
+    // Tolerates a missing config.js so the failure is a clear message at call
+    // time rather than a ReferenceError while the popup loads.
     const config = (typeof CONFIG !== 'undefined' && CONFIG) || {};
     this.supabaseUrl = config.SUPABASE_URL || '';
     this.supabaseAnonKey = config.SUPABASE_ANON_KEY || '';
@@ -76,9 +63,7 @@ class SupabaseExtensionClient {
     return Boolean(this.supabaseUrl && this.supabaseAnonKey);
   }
 
-  // The URL Supabase must redirect back to. Chrome only auto-closes the auth
-  // window for https://<extension-id>.chromiumapp.org/* - a chrome-extension://
-  // URL leaves the flow hanging forever.
+  // Chrome only auto-closes the auth window for chromiumapp.org redirects.
   getRedirectUrl() {
     return chrome.identity.getRedirectURL();
   }
@@ -108,12 +93,13 @@ class SupabaseExtensionClient {
       code_challenge_method: 's256'
     })}`;
 
+    console.debug('Authorize URL:', authorizeUrl);
+
     let redirectResponse;
     try {
       redirectResponse = await launchWebAuthFlow(authorizeUrl);
     } catch (error) {
-      // By far the most common cause is the redirect URL not being on
-      // Supabase's allow-list, which presents as a window that never closes.
+      // Usually a missing allow-list entry, which presents as a window that never closes.
       console.error(
         `Sign-in flow failed. Confirm this exact URL is listed under Supabase ` +
           `Authentication > URL Configuration > Redirect URLs:\n  ${redirectUrl}`
@@ -121,8 +107,6 @@ class SupabaseExtensionClient {
       throw error;
     }
 
-    // The verifier never leaves this function scope, so there's nothing to
-    // persist and nothing to clean up if the user abandons the flow.
     return this.exchangeCodeForSession(redirectResponse, codeVerifier);
   }
 
@@ -151,8 +135,6 @@ class SupabaseExtensionClient {
     return this.storeSession(await response.json());
   }
 
-  // Normalizes and persists a session. GoTrue returns expires_at, but derive
-  // it from expires_in when absent so expiry checks never silently pass.
   async storeSession(session) {
     if (!session || !session.access_token) {
       throw new Error('Supabase returned an invalid session.');
@@ -160,6 +142,7 @@ class SupabaseExtensionClient {
 
     const normalized = {
       ...session,
+      // Derived when absent so expiry checks can't silently pass.
       expires_at:
         session.expires_at ||
         Math.floor(Date.now() / 1000) + (session.expires_in || 3600)
@@ -173,8 +156,6 @@ class SupabaseExtensionClient {
     await chrome.storage.local.remove([SESSION_STORAGE_KEY, ...LEGACY_STORAGE_KEYS]);
   }
 
-  // Returns a valid session, refreshing if needed, or null if the user needs
-  // to sign in again.
   async getSession() {
     const stored = await chrome.storage.local.get(SESSION_STORAGE_KEY);
     const session = stored[SESSION_STORAGE_KEY];
@@ -196,8 +177,7 @@ class SupabaseExtensionClient {
     return this.refreshSession(session.refresh_token);
   }
 
-  // Single-flight: the popup can ask for a session from two places at once
-  // (generate and send), and a refresh token is single-use.
+  // Single-flight: refresh tokens are single-use and the popup can ask twice at once.
   async refreshSession(refreshToken) {
     if (this.refreshInFlight) {
       return this.refreshInFlight;
@@ -233,8 +213,6 @@ class SupabaseExtensionClient {
     return session ? session.access_token : null;
   }
 
-  // User details come straight off the stored session - no extra network call
-  // to Google's userinfo endpoint is needed.
   async getUser() {
     const session = await this.getSession();
     if (!session || !session.user) {
@@ -277,11 +255,10 @@ class SupabaseExtensionClient {
         return `${fallbackMessage}: ${detail}`;
       }
     } catch {
-      // Non-JSON error body; fall through to the generic message.
+      // Non-JSON error body.
     }
     return `${fallbackMessage} (HTTP ${response.status})`;
   }
 }
 
-// Export singleton instance
 const supabaseExtension = new SupabaseExtensionClient();
