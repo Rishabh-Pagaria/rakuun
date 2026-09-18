@@ -18,18 +18,6 @@ CREATE TABLE IF NOT EXISTS public.user_profiles (
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Create user_sessions table for extension-dashboard sync
--- NOTE: superseded by ADR-006/008 - drop this together with the
--- /api/auth/create-session and /api/auth/validate-session routes.
-CREATE TABLE IF NOT EXISTS public.user_sessions (
-  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
-  session_token TEXT NOT NULL UNIQUE,
-  expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  metadata JSONB DEFAULT '{}'::jsonb
-);
-
 -- Create email_history table
 CREATE TABLE IF NOT EXISTS public.email_history (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
@@ -71,9 +59,6 @@ CREATE TABLE IF NOT EXISTS public.campaign_emails (
 );
 
 -- Create indexes for better performance
-CREATE INDEX IF NOT EXISTS idx_user_sessions_user_id ON public.user_sessions(user_id);
-CREATE INDEX IF NOT EXISTS idx_user_sessions_token ON public.user_sessions(session_token);
-CREATE INDEX IF NOT EXISTS idx_user_sessions_expires ON public.user_sessions(expires_at);
 CREATE INDEX IF NOT EXISTS idx_email_history_user_id ON public.email_history(user_id);
 CREATE INDEX IF NOT EXISTS idx_email_history_sent_at ON public.email_history(sent_at);
 CREATE INDEX IF NOT EXISTS idx_bulk_campaigns_user_id ON public.bulk_campaigns(user_id);
@@ -81,7 +66,6 @@ CREATE INDEX IF NOT EXISTS idx_campaign_emails_campaign_id ON public.campaign_em
 
 -- Enable RLS on all tables (already idempotent)
 ALTER TABLE public.user_profiles ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.user_sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.email_history ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.bulk_campaigns ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.campaign_emails ENABLE ROW LEVEL SECURITY;
@@ -101,23 +85,6 @@ CREATE POLICY "Users can update own profile" ON public.user_profiles
 DROP POLICY IF EXISTS "Users can insert own profile" ON public.user_profiles;
 CREATE POLICY "Users can insert own profile" ON public.user_profiles
   FOR INSERT WITH CHECK (auth.uid() = id);
-
--- User sessions: Users can only see their own sessions
-DROP POLICY IF EXISTS "Users can view own sessions" ON public.user_sessions;
-CREATE POLICY "Users can view own sessions" ON public.user_sessions
-  FOR SELECT USING (auth.uid() = user_id);
-
-DROP POLICY IF EXISTS "Users can insert own sessions" ON public.user_sessions;
-CREATE POLICY "Users can insert own sessions" ON public.user_sessions
-  FOR INSERT WITH CHECK (auth.uid() = user_id);
-
-DROP POLICY IF EXISTS "Users can update own sessions" ON public.user_sessions;
-CREATE POLICY "Users can update own sessions" ON public.user_sessions
-  FOR UPDATE USING (auth.uid() = user_id);
-
-DROP POLICY IF EXISTS "Users can delete own sessions" ON public.user_sessions;
-CREATE POLICY "Users can delete own sessions" ON public.user_sessions
-  FOR DELETE USING (auth.uid() = user_id);
 
 -- Email history: Users can only see their own emails
 DROP POLICY IF EXISTS "Users can view own email history" ON public.email_history;
@@ -176,16 +143,3 @@ DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
-
--- Create function to clean up expired sessions
-CREATE OR REPLACE FUNCTION public.cleanup_expired_sessions()
-RETURNS void
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public, pg_temp
-AS $$
-BEGIN
-  DELETE FROM public.user_sessions
-  WHERE expires_at < NOW();
-END;
-$$;
