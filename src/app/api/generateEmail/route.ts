@@ -23,14 +23,18 @@ export async function POST(req: NextRequest) {
     model: "gemini-2.5-flash-lite-preview-06-17",
     generationConfig: {
       responseMimeType: "application/json",
+      // name/company/title feed the contact upsert, not the email itself.
       responseSchema: {
         type: SchemaType.OBJECT,
         properties: {
           email: { type: SchemaType.STRING },
           to: { type: SchemaType.STRING },
-          subject: { type: SchemaType.STRING }
+          subject: { type: SchemaType.STRING },
+          name: { type: SchemaType.STRING },
+          company: { type: SchemaType.STRING },
+          title: { type: SchemaType.STRING }
         },
-        required: ["email", "to", "subject"]
+        required: ["email", "to", "subject", "name", "company", "title"]
       }
     }
   });
@@ -56,6 +60,13 @@ export async function POST(req: NextRequest) {
                   - Extract recipient's email if mentioned in content
                   - Create compelling subject line for ${context || 'outreach'}
                   - Keep concise (under 250 words for email body)
+
+                  ALSO EXTRACT, for the contact record (not for the email body):
+                  - name: the recipient's full name
+                  - company: their company, university, or institution
+                  - title: their job or academic title
+                  Use an empty string for anything the content does not actually
+                  state. Never guess or invent these three fields.
                   `;
 
   try {

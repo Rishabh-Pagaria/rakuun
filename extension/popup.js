@@ -5,6 +5,10 @@ let originalSelectedText = null;
 let lastGeneratedContext = null;
 let isEmailGenerated = false;
 
+// Who Gemini identified in the page text, saved as a contact after a send.
+// `email` records who it described, so an edited recipient doesn't inherit it.
+let lastExtracted = { name: "", company: "", title: "", email: "" };
+
 // DOM elements for authentication
 const signinScreen = document.getElementById("signin-screen");
 const mainScreen = document.getElementById("main-screen");
@@ -138,6 +142,7 @@ async function handleSignOut() {
     originalSelectedText = null;
     lastGeneratedContext = null;
     isEmailGenerated = false;
+    lastExtracted = { name: "", company: "", title: "", email: "" };
     clearComposeFields();
     showSignInScreen();
   }
@@ -317,6 +322,12 @@ async function generateEmailWithContext(context, textToUse = null) {
 
       isEmailGenerated = true;
       lastGeneratedContext = context;
+      lastExtracted = {
+        name: data.name || "",
+        company: data.company || "",
+        title: data.title || "",
+        email: (data.to || "").trim().toLowerCase()
+      };
       showOutput("Email generated successfully! You can edit it above.", "success");
 
       checkSendButtonState();
@@ -348,6 +359,46 @@ async function postEmail(payload, { allowRetry = true } = {}) {
   return { res, data: await res.json().catch(() => ({})) };
 }
 
+// Runs after the send. The mail has already left, so a failure here is reported
+// but never turned into a failed send.
+async function saveContact(to, subject) {
+  const contactPayload = {
+    email: to,
+    source: "extension",
+    raw_capture: {
+      selected_text: originalSelectedText || null,
+      context: lastGeneratedContext || null,
+      subject
+    }
+  };
+
+  // Only attach the extraction if the recipient is still the person it described.
+  // Omitted rather than sent empty, so a blank never overwrites a known value.
+  if (lastExtracted.email && lastExtracted.email === to.trim().toLowerCase()) {
+    if (lastExtracted.name) contactPayload.name = lastExtracted.name;
+    if (lastExtracted.company) contactPayload.company = lastExtracted.company;
+    if (lastExtracted.title) contactPayload.title = lastExtracted.title;
+  }
+
+  const contactRes = await apiFetch("/api/contacts", contactPayload);
+  if (!contactRes.ok) {
+    const detail = await contactRes.json().catch(() => ({}));
+    throw new Error(detail.error || `Contact save failed (${contactRes.status})`);
+  }
+
+  const contact = await contactRes.json();
+
+  const interactionRes = await apiFetch(`/api/contacts/${contact.id}/interactions`, {
+    type: "email_sent",
+    payload: { subject, context: lastGeneratedContext || null }
+  });
+  if (!interactionRes.ok) {
+    throw new Error(`Interaction log failed (${interactionRes.status})`);
+  }
+
+  return contact;
+}
+
 async function handleSendEmail() {
   if (!recipientEmail || !subjectEmail || !bodyInput) return;
   const to = recipientEmail.value.trim();
@@ -367,7 +418,14 @@ async function handleSendEmail() {
     const { res, data } = await postEmail({ to, subject, body });
 
     if (res.ok && data.success) {
-      showOutput("Email sent successfully!", "success");
+      showOutput("Email sent. Saving contact...", "success");
+      try {
+        await saveContact(to, subject);
+        showOutput("Email sent and contact saved.", "success");
+      } catch (saveError) {
+        console.error("Contact save failed:", saveError);
+        showOutput("Email sent, but saving the contact failed.", "error");
+      }
     } else {
       showOutput(data.error || "Failed to send email. Please try again.", "error");
     }
