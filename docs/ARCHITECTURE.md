@@ -82,13 +82,21 @@ Each of these follows the same shape: context, decision, consequences. They're t
 
 - **Context:** the extension previously obtained a Google access token via `chrome.identity.getAuthToken()` purely to call Gmail, with Supabase Auth (and the bespoke `create-session` table) as a separate, unused identity path. ADR-003 established that Supabase Auth must be the one identity system; this decision specifies how it also covers Gmail access.
 - **Decision:** the extension signs in via Supabase's Google provider, requesting the `gmail.send` scope with `access_type=offline` and `prompt=consent`. The resulting session provides both a real Supabase identity (`auth.uid()` for RLS) and Google's own tokens (`session.provider_token`, `session.provider_refresh_token`) for calling the Gmail API directly — one OAuth broker instead of two.
-- **Consequences:** `chrome.identity.getAuthToken()` and the `create-session`/`validate-session` routes and `user_sessions` table are no longer needed and should be removed. `extension/supabase-client.js` already implements the right shape for this but has three bugs — tracked in `claude.internal.md`. `gmail.send` remains a sensitive Google scope requiring app verification regardless of which OAuth path is used to request it.
+- **Consequences:** the `create-session`/`validate-session` routes and the `user_sessions` table are no longer needed and should be removed. `gmail.send` remains a sensitive Google scope requiring app verification regardless of which OAuth path is used to request it.
+- **⚠️ Partially superseded by ADR-008.** The identity half of this decision stands and is implemented: sign-in goes through Supabase's Google provider via PKCE. The Gmail half does not — `session.provider_token` does not survive a session refresh, so ADR-008 moves Gmail access back to `chrome.identity.getAuthToken()`. `access_type=offline` / `prompt=consent` are consequently no longer requested.
 
 ### ADR-007: Cloud-hosted Supabase only, no self-hosted Docker option
 
 - **Context:** self-hosting would require running Supabase's full stack (Postgres, GoTrue, Kong, PostgREST, Realtime, Storage, Studio) via Docker to preserve Auth and RLS — a bare Postgres container alone would lose both. That's meaningfully heavier ops for each developer deploying their own instance than the project's "self-hosted, BYO credentials" model needs.
 - **Decision:** each deployment uses a developer's own Supabase cloud project (the free tier is sufficient at this scale). No self-hosted Docker Compose stack is provided or documented.
 - **Consequences:** setup for a new developer stays at "create a Supabase project, paste three env vars" rather than operating multiple containers and a reverse proxy. The trade-off is a dependency on Supabase's cloud service rather than a fully self-contained deployment — acceptable given the project's actual goal is easy per-developer setup, not zero third-party dependency.
+
+### ADR-008: Gmail access is brokered by Chrome, not by Supabase's `provider_token`
+
+- **Context:** ADR-006 assumed the Supabase session could carry Gmail access indefinitely via `session.provider_token`. It cannot. Supabase returns `provider_token` and `provider_refresh_token` on the **initial sign-in response only**; it does not persist them and does not return them after a session refresh. So a `provider_token`-based implementation stops sending roughly an hour after sign-in, when the first refresh drops the Google token. Refreshing that token directly against Google requires the OAuth **client secret**, which a Chrome extension cannot hold.
+- **Decision:** split the two concerns. Supabase Auth remains the sole identity system (ADR-003, unchanged) — the extension signs in through Supabase's Google provider using the PKCE flow driven by `chrome.identity.launchWebAuthFlow`, and the resulting Supabase access token is what authenticates calls to `/api/*`. Gmail access is obtained separately via `chrome.identity.getAuthToken`, which brokers the `gmail.send` token and refreshes it natively with no client secret. The extension requests Gmail consent lazily, on first send, rather than at sign-in.
+- **Consequences:** the extension works end to end today with no server-side token storage. ADR-006's "one OAuth broker instead of two" goal is given up; its underlying goal — *one identity system* — is fully preserved, because the Google token is never treated as identity. The costs are two Google OAuth clients per deployment (Supabase needs a *Web application* client; `getAuthToken` needs a *Chrome Extension* client — these cannot be the same client) and two consent prompts on first use.
+- **The alternative, and when to revisit:** the backend could hold the client secret, store `provider_refresh_token` server-side encrypted, and mint Gmail tokens itself. That is arguably cleaner — one OAuth client, one consent, and the extension would stop handling Google credentials entirely — but it requires an encrypted token store and refresh logic before Gmail send works at all. Revisit when Calendar OAuth arrives (Phase 1) and a shared server-side token store starts paying for itself. The entire reversal surface is `extension/gmail-auth.js` plus the `userToken` field in the send request; nothing else depends on where the Gmail token comes from.
 
 ## 6. Containers
 
@@ -108,7 +116,7 @@ graph TD
 
 ## 7. Data model
 
-`contacts` and `interactions` are new tables to add. `email_history` already exists (see `supabase/setup.sql`) and gains a `contact_id` foreign key so historical sends link to the unified model.
+`contacts` and `interactions` are defined in `supabase/migrations/`. `email_history` gains a `contact_id` foreign key so historical sends link to the unified model.
 
 ```mermaid
 erDiagram
@@ -125,8 +133,9 @@ erDiagram
         string phone
         string source "extension, card_scan, or manual"
         jsonb raw_capture
-        jsonb tags
+        text_array tags
         timestamp created_at
+        timestamp updated_at
     }
     INTERACTIONS {
         uuid id PK
@@ -147,13 +156,22 @@ erDiagram
     }
 ```
 
-RLS on `contacts` and `interactions` follows the existing pattern in `supabase/setup.sql`: `auth.uid() = user_id` (directly on `contacts`, and via a join through `contacts` for `interactions`).
+RLS on `contacts` and `interactions` follows the existing pattern: `auth.uid() = user_id` (directly on `contacts`, and via a join through `contacts` for `interactions`). Update policies carry `WITH CHECK` as well as `USING`, so a row can't be reassigned to another user.
+
+Three details the diagram doesn't show, settled when the migration was written:
+
+- **`email` is nullable** — business cards routinely carry a phone number and no email.
+- **Deduplication is `UNIQUE (user_id, email)`, a plain constraint.** Postgres treats NULLs as distinct, so email-less contacts never collide with each other, and a plain constraint is the only form `upsert({ onConflict: 'user_id,email' })` can target — a partial index would break every upsert.
+- **Emails are stored lowercase**, enforced by a `CHECK`, so casing can't split one person into two contacts.
+
+`tags` is `text[]` rather than the `jsonb` originally sketched: the column holds plain word labels, and `text[]` makes the database reject anything that isn't a list of strings instead of silently accepting a shape the tag filter will never match.
 
 ## 8. Roadmap
 
 **Phase 0 — MVP (build first):**
 
-1. Migrate the schema: add `contacts` and `interactions`, add `contact_id` to `email_history`.
+0. ~~Give the extension a real Supabase session (ADR-006 identity half + ADR-008).~~ **Done.** This has to precede everything below it: `/api/contacts` enforces access through RLS on `auth.uid() = user_id`, and `auth.uid()` only exists if the caller presents a Supabase session. Without it, step 3 could only be built by passing a client-supplied `user_id` to a service-role client — reintroducing the exact hole that made `create-session` unsafe.
+1. ~~Migrate the schema: add `contacts` and `interactions`, add `contact_id` to `email_history`.~~ **Done.** `setup.sql` is replaced by ordered, idempotent migrations under `supabase/migrations/`; `contacts` carries the `UNIQUE (user_id, email)` constraint the upsert-by-email pattern requires.
 2. Build the shared `/api/contacts` endpoint (upsert-by-email, list, get).
 3. Wire the extension's send flow to upsert a contact alongside sending the email.
 4. Build the business card capture page: camera/file input → Gemini vision extraction → editable confirm form → save via the same endpoint.
@@ -164,7 +182,7 @@ RLS on `contacts` and `interactions` follows the existing pattern in `supabase/s
 
 - MCP server exposing `/api/contacts/*` as tools; agent-driven follow-up drafting.
 - Google Calendar OAuth + scheduling, following the same OAuth pattern already used for Gmail.
-- Fix the three bugs in `extension/supabase-client.js` tracked in `claude.internal.md`, wire it into `popup.js` per ADR-006, and remove `create-session`/`validate-session`/`user_sessions` once it's confirmed working.
+- ~~Fix the bugs in `extension/supabase-client.js` and wire it into `popup.js`.~~ **Done** — moved to Phase 0 step 0, where it belongs. Removing `create-session`/`validate-session`/`user_sessions` is now unblocked and should happen immediately: they are unauthenticated service-role writes, so leaving them deployed is a live security hole, not dead code.
 - OAuth verification path for Gmail's `gmail.send` scope if this moves beyond personal/closed-beta use.
 - Entity resolution beyond exact-email matching.
 - Retention/deletion policy for business card photos.

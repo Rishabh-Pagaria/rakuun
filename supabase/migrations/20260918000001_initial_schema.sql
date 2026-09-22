@@ -1,9 +1,6 @@
--- Rakuun schema setup.
+-- Rakuun initial schema.
 --
--- Safe to re-run: every statement is idempotent. Note that this only covers
--- creating objects, not altering existing ones - once the contacts/interactions
--- work lands (Phase 0 step 1), real numbered migrations under
--- supabase/migrations/ replace this file.
+-- Safe to re-run: every statement is idempotent.
 --
 -- Do not add anything here that modifies the auth schema. Referencing
 -- auth.users and hanging a trigger off it are supported; altering it is not.
