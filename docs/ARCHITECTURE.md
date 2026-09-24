@@ -175,7 +175,9 @@ Three details the diagram doesn't show, settled when the migration was written:
 2. ~~Build the shared `/api/contacts` endpoint (upsert-by-email, list, get).~~ **Done.** `POST`/`GET /api/contacts`, `GET`/`PATCH`/`DELETE /api/contacts/[id]`, and `GET`/`POST /api/contacts/[id]/interactions`. `POST` merges — fields the caller omits keep their existing values, so an extension capture carrying only an email cannot blank a name a card scan already supplied; `PATCH` sets exactly what it is given and is therefore the only way to clear a field.
 3. ~~Wire the extension's send flow to upsert a contact alongside sending the email.~~ **Done.** After a successful send the popup upserts the recipient (`source: extension`) and logs an `email_sent` interaction. `generateEmail` now also extracts name, company and title so the contact isn't just an address. The save runs *after* the send and never fails it — the mail has already left, so a save error is reported, not escalated.
 4. Build the business card capture page: camera/file input → Gemini vision extraction → editable confirm form → save via the same endpoint.
-5. Build a bare-bones dashboard: contact list, source badges, search, per-contact interaction history.
+5. ~~Build a bare-bones dashboard: contact list, source badges, search, per-contact interaction history.~~ **Done.** `/` signs in, `/dashboard` lists contacts with search, source filters, expandable interaction history and delete.
+
+   The web app authenticates client-side: the Supabase session lives in browser storage, so pages are Client Components that call `/api/contacts` with a bearer token. Server-rendering the list would need cookie-backed sessions via `@supabase/ssr` — a dependency and a middleware/callback layer that buys nothing at this scale. Revisit if the dashboard grows enough that a client-side fetch waterfall actually hurts.
 6. Run one real end-to-end test across both capture paths.
 
 **Phase 1 — robustness (after the MVP proves the loop):**

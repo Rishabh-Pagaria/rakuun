@@ -69,11 +69,15 @@ Google verification before any wider distribution.
    application* client — not the Chrome Extension one).
 3. Leave scopes at the default. Gmail scope is **not** requested here; Chrome
    handles it separately (ADR-008).
-4. **Authentication → URL Configuration → Redirect URLs**: add
-   `https://<extension-id>.chromiumapp.org/` exactly as it appears.
+4. **Authentication → URL Configuration → Redirect URLs**: add **both**
+   - `https://<extension-id>.chromiumapp.org/` exactly as it appears (extension)
+   - `http://localhost:3000/dashboard` (web app)
 
 Skipping 5.4 is the single most common setup failure. Its symptom is an auth
 window that opens and never closes, not an error message.
+
+If `npm run dev` reports "Port 3000 is in use" and falls back to 3001, the web
+app's redirect URL changes with it — add that port too, or free up 3000.
 
 ## 6. Set up the database schema
 
